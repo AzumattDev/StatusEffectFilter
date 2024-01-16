@@ -8,87 +8,55 @@ using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
 using JetBrains.Annotations;
-using UnityEngine;
+using StatusEffectFilter.ConfigManagerEntry;
 
 namespace StatusEffectFilter
 {
+    /* Special thanks to RedSeiko for some of the code in this mod.
+     You'll find most of their code I used in the ConfigManagerEntry folder.
+     I felt their version was a bit overly complex so it's modified a bit to be more "out-of-the-box" BepInEx configurations without the custom attributes and such.
+     I have also added some features and caching that weren't really present before. */
     [BepInPlugin(ModGUID, ModName, ModVersion)]
     public class StatusEffectFilterPlugin : BaseUnityPlugin
     {
         internal const string ModName = "StatusEffectFilter";
         internal const string ModVersion = "1.0.0";
         internal const string Author = "Azumatt";
-        private const string ModGUID = Author + "." + ModName;
-        private static string ConfigFileName = ModGUID + ".cfg";
+        private const string ModGUID = $"{Author}.{ModName}";
+        private static string ConfigFileName = $"{ModGUID}.cfg";
         private static string ConfigFileFullPath = Paths.ConfigPath + Path.DirectorySeparatorChar + ConfigFileName;
-
         private readonly Harmony _harmony = new(ModGUID);
 
         public static readonly ManualLogSource StatusEffectFilterLogger = BepInEx.Logging.Logger.CreateLogSource(ModName);
 
-        public enum Toggle
-        {
-            On = 1,
-            Off = 0
-        }
-
         public void Awake()
         {
-            ConfigUtils.BindConfig(Config);
-
+            ExcludedStatusEffects = config("HUD", "ExcludedStatusEffects", "LocalizedExample=On,$tokenized_example=Off", new ConfigDescription("List of status effects to exclude from HUD. You can use localized names or tokenized for the status effect. Make sure to use =On to enable and =Off to disable. Default values are examples of how to do this directly in the configuration file. The configuration manager will allow you to select these much faster!", null, new ConfigurationManagerAttributes { CustomDrawer = ToggleStringListConfigEntry.Drawer }));
+            ExcludedStatusEffects.SettingChanged += (_, _) => ToggleStringListConfigEntry.ToggledStringValues();
             Assembly assembly = Assembly.GetExecutingAssembly();
             _harmony.PatchAll(assembly);
             SetupWatcher();
         }
 
-        public static IEnumerable<string> GetStatusEffectNames()
-        {
-            if (ObjectDB.m_instance != null)
-            {
-                StatusEffectSpriteManager.Instance.Initialize();
-                return ObjectDB.m_instance.m_StatusEffects
-                    .Where(statusEffect =>
-                        statusEffect.m_icon != null && statusEffect.m_name is { Length: > 0 }
-                                                    && !string.IsNullOrEmpty(statusEffect.m_name))
-                    .SelectMany(statusEffect =>
-                        new[]
-                        {
-                            statusEffect.m_name,
-                            Localization.instance.Localize(statusEffect.m_name)
-                        }
-                    ).Distinct();
-            }
-
-            return new[] { "" };
-        }
-
-        [Config(LateBind = true)]
-        private static void SetupConfig(ConfigFile config)
-        {
-            statusEffectConfig = new ToggleStringListConfigEntry(config, "HUD", // Section
-                "ExcludedStatusEffects", // Key
-                "Effect1=On,Effect2=Off", // Default value (format: "name=state")
-                "List of status effects to exclude from HUD. Name of effect (localized or tokenized) should be followed by =On to enable or =Off to disable.",
-                GetStatusEffectNames // Method to provide status effect names
-            );
-        }
-
-
         private void OnDestroy()
         {
             Config.Save();
+            ExcludedStatusEffects.SettingChanged -= (_, _) => ToggleStringListConfigEntry.ToggledStringValues();
         }
 
         private void SetupWatcher()
         {
-            FileSystemWatcher watcher = new(Paths.ConfigPath, ConfigFileName);
+            FileSystemWatcher watcher = new(Paths.ConfigPath, ConfigFileName)
+            {
+                IncludeSubdirectories = true,
+                SynchronizingObject = ThreadingHelper.SynchronizingObject,
+                EnableRaisingEvents = true
+            };
             watcher.Changed += ReadConfigValues;
             watcher.Created += ReadConfigValues;
             watcher.Renamed += ReadConfigValues;
-            watcher.IncludeSubdirectories = true;
-            watcher.SynchronizingObject = ThreadingHelper.SynchronizingObject;
-            watcher.EnableRaisingEvents = true;
         }
+
 
         private void ReadConfigValues(object sender, FileSystemEventArgs e)
         {
@@ -98,27 +66,24 @@ namespace StatusEffectFilter
                 StatusEffectFilterLogger.LogDebug("ReadConfigValues called");
                 Config.Reload();
             }
-            catch
+            catch (Exception ex)
             {
-                StatusEffectFilterLogger.LogError($"There was an issue loading your {ConfigFileName}");
-                StatusEffectFilterLogger.LogError("Please check your config entries for spelling and format!");
+                StatusEffectFilterLogger.LogError($"Error loading {ConfigFileName}: {ex.Message}");
             }
         }
 
 
         #region ConfigOptions
 
-        internal static ToggleStringListConfigEntry statusEffectConfig;
+        internal static ConfigEntry<string> ExcludedStatusEffects = null!;
 
-        private ConfigEntry<T> config<T>(string group, string name, T value, ConfigDescription description)
+        internal ConfigEntry<T> config<T>(string group, string name, T value, ConfigDescription description)
         {
             ConfigEntry<T> configEntry = Config.Bind(group, name, value, description);
-            //var configEntry = Config.Bind(group, name, value, description);
-
             return configEntry;
         }
 
-        private ConfigEntry<T> config<T>(string group, string name, T value, string description)
+        internal ConfigEntry<T> config<T>(string group, string name, T value, string description)
         {
             return config(group, name, value, new ConfigDescription(description));
         }
@@ -132,92 +97,32 @@ namespace StatusEffectFilter
             [UsedImplicitly] public bool? HideDefaultButton = null!;
         }
 
-        [AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = false)]
-        public class ConfigAttribute : Attribute
-        {
-            public bool LateBind { get; set; } = false;
-        }
-
-        public static class ConfigUtils
-        {
-            public static void BindConfig(ConfigFile config)
-            {
-                BindConfigs(config, Assembly.GetExecutingAssembly());
-            }
-
-            private static void BindConfigs(ConfigFile config, Assembly assembly)
-            {
-                foreach (var pair in GetBindConfigMethods(assembly))
-                {
-                    ConfigBinder.Bind(config, pair.Method, pair.Attribute);
-                }
-            }
-
-
-            private static IEnumerable<MethodInfoConfigAttributePair> GetBindConfigMethods(Assembly assembly)
-            {
-                return assembly.GetTypes().SelectMany(type => type.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)).SelectMany(method => GetBindConfigMethod(method));
-            }
-
-            private static IEnumerable<MethodInfoConfigAttributePair> GetBindConfigMethod(MethodInfo method)
-            {
-                ConfigAttribute attribute = method.GetCustomAttribute<ConfigAttribute>(inherit: false);
-
-                if (attribute != null)
-                {
-                    ParameterInfo[] parameters = method.GetParameters();
-
-                    if (parameters.Length == 1 && parameters[0].ParameterType == typeof(ConfigFile))
-                    {
-                        yield return new MethodInfoConfigAttributePair(method, attribute);
-                    }
-                }
-            }
-        }
-
-        public class MethodInfoConfigAttributePair
-        {
-            public MethodInfo Method { get; set; }
-            public ConfigAttribute Attribute { get; set; }
-
-            public MethodInfoConfigAttributePair(MethodInfo method, ConfigAttribute attribute)
-            {
-                Method = method;
-                Attribute = attribute;
-            }
-        }
-
-
-        [HarmonyPatch]
-        public static class ConfigBinder
-        {
-            private static readonly Queue<Action> LateBindQueue = new();
-            private static bool StartupPatched = false;
-
-            public static void Bind(ConfigFile config, MethodInfo method, ConfigAttribute attribute)
-            {
-                if (!attribute.LateBind || StartupPatched)
-                {
-                    method.Invoke(null, new object[] { config });
-                }
-                else
-                {
-                    LateBindQueue.Enqueue(() => method.Invoke(null, new object[] { config }));
-                }
-            }
-
-            [HarmonyPatch(typeof(FejdStartup), nameof(FejdStartup.Start))]
-            public static void Postfix()
-            {
-                while (LateBindQueue.Count > 0)
-                {
-                    LateBindQueue.Dequeue()?.Invoke();
-                }
-
-                StartupPatched = true;
-            }
-        }
-
         #endregion
+    }
+
+    [HarmonyPatch(typeof(FejdStartup), nameof(FejdStartup.Start))]
+    static class FejdStartupStartPatch
+    {
+        static void Postfix(FejdStartup __instance)
+        {
+            Setup();
+        }
+
+        private static void Setup()
+        {
+            ToggleStringListConfigEntry.AutoCompleteLabel = new AutoCompleteBox(GetStatusEffectNames);
+
+            AutoCompleteBox.InitializeCacheIfNeeded();
+        }
+
+        private static IEnumerable<string> GetStatusEffectNames()
+        {
+            if (ObjectDB.m_instance == null) return new[] { "" };
+            StatusEffectSpriteManager.Instance.Initialize();
+            return ObjectDB.m_instance.m_StatusEffects
+                .Where(statusEffect => statusEffect.m_icon != null && statusEffect.m_name is { Length: > 0 } && !string.IsNullOrEmpty(statusEffect.m_name))
+                .SelectMany(statusEffect => new[] { statusEffect.m_name, Localization.instance.Localize(statusEffect.m_name) })
+                .Distinct();
+        }
     }
 }

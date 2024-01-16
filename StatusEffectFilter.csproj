@@ -12,7 +12,7 @@
         <AssemblyName>StatusEffectFilter</AssemblyName>
         <TargetFrameworkVersion>v4.6.2</TargetFrameworkVersion>
         <FileAlignment>512</FileAlignment>
-        <LangVersion>latestmajor</LangVersion>
+        <LangVersion>preview</LangVersion>
         <Nullable>enable</Nullable>
     </PropertyGroup>
     <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
@@ -105,9 +105,12 @@
         </Reference>
     </ItemGroup>
     <ItemGroup>
+        <Compile Include="ConfigManagerEntry\AutoCompleteBox.cs" />
+        <Compile Include="ConfigManagerEntry\ToggleStringListConfigEntry.cs" />
         <Compile Include="Plugin.cs"/>
         <Compile Include="Properties\AssemblyInfo.cs"/>
         <Compile Include="StatusEffectPatches.cs" />
+        <Compile Include="StatusEffectSpriteManager.cs" />
     </ItemGroup>
     <ItemGroup>
         <Content Include=".gitignore"/>

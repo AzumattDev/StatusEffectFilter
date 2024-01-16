@@ -17,7 +17,7 @@ Code here: [https://github.com/AzumattDev/StatusEffectFilter](https://github.com
 
 ---
 
-![](https://github.com/AzumattDev/StatusEffectFilter/blob/master/Thunderstore/icon_readme.png)
+![](https://github.com/AzumattDev/StatusEffectFilter/blob/master/Thunderstore/icon_readme.png?raw=true)
 
 
 <details>

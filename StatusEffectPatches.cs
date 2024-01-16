@@ -55,7 +55,7 @@ public class ToggleStringListConfigEntry
         {
             string[] parts = values[i].Split(_toggleSeperator, 2, StringSplitOptions.RemoveEmptyEntries);
 
-            if (parts.Length >= 2 && parts[1] == "1")
+            if (parts.Length >= 2 && parts[1].Equals("On", StringComparison.OrdinalIgnoreCase))
             {
                 _valuesCache.Add(parts[0]);
             }
@@ -83,7 +83,7 @@ public class ToggleStringListConfigEntry
         for (int i = 0, count = _valuesCache.Count; i < count; ++i)
         {
             string[] parts = _valuesCache[i].Split(_toggleSeperator, 2, StringSplitOptions.RemoveEmptyEntries);
-            bool isToggled = parts.Length >= 2 && parts[1] == "1";
+            bool isToggled = parts.Length >= 2 && parts[1].Equals("On", StringComparison.OrdinalIgnoreCase);
 
             GUILayout.BeginHorizontal();
 
@@ -108,7 +108,7 @@ public class ToggleStringListConfigEntry
             if (result != isToggled)
             {
                 hasChanged = true;
-                _valuesCache[i] = parts[0] + (result ? "=1" : "=0");
+                _valuesCache[i] = parts[0] + "=" + (result ? "On" : "Off");
             }
         }
 
@@ -119,10 +119,11 @@ public class ToggleStringListConfigEntry
 
         if (GUILayout.Button("\u002B", GUILayout.MinWidth(40f), GUILayout.ExpandWidth(false)) && !string.IsNullOrWhiteSpace(_valueText) && _valueText.IndexOf('=') < 0)
         {
-            _valuesCache.Add(_valueText + "=1");
+            _valuesCache.Add(_valueText + "=On");
             _valueText = string.Empty;
             hasChanged = true;
         }
+
 
         GUILayout.EndHorizontal();
 
@@ -132,7 +133,7 @@ public class ToggleStringListConfigEntry
 
             if (!string.IsNullOrEmpty(result))
             {
-                _valuesCache.Add(result + "=1");
+                _valuesCache.Add(result + "=On");
                 hasChanged = true;
             }
         }
@@ -155,44 +156,59 @@ public class ToggleStringListConfigEntry
     {
         readonly Func<IEnumerable<string>> _optionsFunc;
         List<string> _options;
-
         readonly List<string> _currentOptions;
         string _value;
         Vector2 _scrollPosition;
+        List<string> _sortedOptionsCache;
+        bool _isCacheInitialized = false;
 
         public AutoCompleteBox(Func<IEnumerable<string>> optionsFunc)
         {
             _optionsFunc = optionsFunc;
-            _options = null;
-            _currentOptions = new();
+            _options = new List<string>();
+            _currentOptions = new List<string>();
             _value = string.Empty;
             _scrollPosition = Vector2.zero;
+            _sortedOptionsCache = new List<string>();
+        }
+
+        private void InitializeCacheIfNeeded()
+        {
+            if (!_isCacheInitialized)
+            {
+                _options = new(_optionsFunc());
+                _sortedOptionsCache = _options.OrderBy(option => !option.StartsWith(Localization.instance.Localize(option))).ToList();
+                _isCacheInitialized = true;
+            }
         }
 
         public string DrawBox(string value)
         {
+            InitializeCacheIfNeeded(); // Ensure cache is initialized
+
             if (_value != value)
             {
                 _value = value;
                 _currentOptions.Clear();
 
-                if (!string.IsNullOrEmpty(value))
-                {
-                    _options ??= new(_optionsFunc());
-
-                    _currentOptions.AddRange(_options.Where(option => option.StartsWith(value, StringComparison.InvariantCultureIgnoreCase)));
-                }
+                // Show all options from the cache if no user input
+                // Filter based on user input
+                _currentOptions.AddRange(!string.IsNullOrEmpty(value)
+                    ? _options.Where(option => option.StartsWith(value, StringComparison.InvariantCultureIgnoreCase))
+                    : _sortedOptionsCache);
 
                 _scrollPosition = Vector2.zero;
             }
-
-            if (string.IsNullOrEmpty(_value))
+            else if (string.IsNullOrEmpty(value) && _isCacheInitialized)
             {
-                return string.Empty;
+                _currentOptions.Clear();
+                // Populate _currentOptions with all options from the cache on first run
+                _currentOptions.AddRange(_sortedOptionsCache);
             }
 
             return DrawCurrentOptions();
         }
+
 
         string DrawCurrentOptions()
         {
@@ -202,10 +218,25 @@ public class ToggleStringListConfigEntry
 
             foreach (string option in _currentOptions)
             {
+                GUILayout.BeginHorizontal();
+
+                var sprite = StatusEffectSpriteManager.Instance.GetSprite(option);
+                if (sprite != null)
+                {
+                    Rect spriteRect = sprite.textureRect;
+                    Rect renderRect = GUILayoutUtility.GetRect(spriteRect.width, spriteRect.height);
+
+                    GUI.DrawTextureWithTexCoords(renderRect, sprite.texture, new Rect(spriteRect.x / sprite.texture.width, spriteRect.y / sprite.texture.height, spriteRect.width / sprite.texture.width, spriteRect.height / sprite.texture.height));
+
+                    GUILayout.FlexibleSpace();
+                }
+
                 if (GUILayout.Button(option, GUILayout.MinWidth(40f)))
                 {
                     result = option;
                 }
+
+                GUILayout.EndHorizontal();
             }
 
             GUILayout.EndScrollView();
@@ -240,5 +271,64 @@ public static class ConfigFileExtensions
             HideDefaultButton = hideDefaultButton,
             Order = GetSettingOrder(section)
         }));
+    }
+}
+
+public class StatusEffectSpriteManager
+{
+    private static StatusEffectSpriteManager _instance;
+    public static StatusEffectSpriteManager Instance => _instance ?? (_instance = new StatusEffectSpriteManager());
+
+    private Dictionary<string, Sprite> _sprites;
+
+    private StatusEffectSpriteManager()
+    {
+        LoadSprites();
+    }
+
+    public void Initialize()
+    {
+        LoadSprites();
+    }
+
+    private void LoadSprites()
+    {
+        _sprites = new Dictionary<string, Sprite>();
+        foreach (var statusEffect in ObjectDB.m_instance.m_StatusEffects)
+        {
+            if (statusEffect.m_icon != null && !string.IsNullOrEmpty(statusEffect.m_name))
+            {
+                string nonLocalized = statusEffect.m_name;
+                string localized = Localization.instance.Localize(nonLocalized);
+                Sprite icon = statusEffect.m_icon;
+                if (!_sprites.ContainsKey(nonLocalized))
+                {
+                    _sprites[nonLocalized] = icon;
+                }
+
+                if (!_sprites.ContainsKey(localized))
+                {
+                    _sprites[localized] = icon;
+                }
+            }
+        }
+    }
+
+
+    public Sprite GetSprite(string statusEffectName)
+    {
+        if (_sprites.TryGetValue(statusEffectName, out var sprite))
+        {
+            return sprite;
+        }
+
+        // Try with localized name if the non-localized name doesn't work
+        string localized = Localization.instance.Localize(statusEffectName);
+        if (_sprites.TryGetValue(localized, out sprite))
+        {
+            return sprite;
+        }
+
+        return null;
     }
 }

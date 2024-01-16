@@ -45,6 +45,7 @@ namespace StatusEffectFilter
         {
             if (ObjectDB.m_instance != null)
             {
+                StatusEffectSpriteManager.Instance.Initialize();
                 return ObjectDB.m_instance.m_StatusEffects
                     .Where(statusEffect =>
                         statusEffect.m_icon != null && statusEffect.m_name is { Length: > 0 }
@@ -61,27 +62,13 @@ namespace StatusEffectFilter
             return new[] { "" };
         }
 
-        public static IEnumerable<Sprite> GetStatusEffectIcons()
-        {
-            if (ObjectDB.m_instance != null)
-            {
-                return ObjectDB.m_instance.m_StatusEffects
-                    .Where(statusEffect =>
-                        statusEffect.m_icon != null && statusEffect.m_name is { Length: > 0 }
-                                                    && !string.IsNullOrEmpty(statusEffect.m_name))
-                    .Select(statusEffect => statusEffect.m_icon);
-            }
-
-            return new List<Sprite>();
-        }
-
         [Config(LateBind = true)]
         private static void SetupConfig(ConfigFile config)
         {
             statusEffectConfig = new ToggleStringListConfigEntry(config, "HUD", // Section
                 "ExcludedStatusEffects", // Key
-                "Effect1=1,Effect2=0", // Default value (format: "name=state")
-                "List of status effects to exclude from HUD. Name of effect should be followed by =1 to enable or =0 to disable.",
+                "Effect1=On,Effect2=Off", // Default value (format: "name=state")
+                "List of status effects to exclude from HUD. Name of effect (localized or tokenized) should be followed by =On to enable or =Off to disable.",
                 GetStatusEffectNames // Method to provide status effect names
             );
         }
